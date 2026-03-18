@@ -111,9 +111,11 @@
                                 class="text-xs font-mono text-monad-success tracking-widest uppercase ml-1">Bounty</label>
                             <div class="relative">
                                 <input type="number" id="questReward" step="0.1" placeholder="100"
-                                    class="input-pro w-full rounded-lg pl-5 pr-12 py-4 text-lg font-mono placeholder-gray-500">
-                                <span
-                                    class="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-xs">MON</span>
+                                    class="input-pro w-full rounded-lg pl-5 pr-16 py-4 text-lg font-mono placeholder-gray-500">
+                                <select id="tokenSelect" class="absolute right-2 top-1/2 -translate-y-1/2 bg-white/5 border border-white/10 rounded-md px-1 py-1 text-[10px] font-mono text-gray-400 focus:outline-none focus:border-monad-accent transition-all cursor-pointer appearance-none hover:text-white">
+                                    <option value="native">MON</option>
+                                    <option value="erc20">USDC</option>
+                                </select>
                             </div>
                         </div>
 
@@ -268,6 +270,7 @@
     </main>
 
     <!-- JS LOGIC -->
+    <script src="js/utils.js"></script>
     <script src="js/app.js" defer></script>
 </body>
 

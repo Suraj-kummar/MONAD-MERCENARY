@@ -2,10 +2,18 @@
 const CONTRACT_ADDRESS = "0xd9145CCE52D386f254917e481eB44e9943F39138";
 const CONTRACT_ABI = [
     "function postQuest(string memory _desc) public payable",
+    "function postQuestERC20(string memory _desc, address _token, uint _amount) public",
     "function payoutMercenary(uint _id, address _mercenary) public",
-    "function getActiveQuests() public view returns (tuple(uint id, address poster, string description, uint reward, bool isCompleted, address winner)[])",
-    "event QuestPosted(uint indexed id, address indexed poster, uint reward)",
-    "event QuestCompleted(uint indexed id, address indexed winner)"
+    "function getActiveQuests() public view returns (tuple(uint id, address poster, string description, uint reward, address token, bool isCompleted, address winner)[])",
+    "function getReputation(address _user) public view returns (uint)",
+    "event QuestPosted(uint indexed id, address indexed poster, uint reward, address token)",
+    "event QuestCompleted(uint indexed id, address indexed winner, uint reward, address token, uint xpGained)"
+];
+const ERC20_ABI = [
+    "function approve(address spender, uint256 amount) public returns (bool)",
+    "function allowance(address owner, address spender) public view returns (uint256)",
+    "function decimals() public view returns (uint8)",
+    "function symbol() public view returns (string)"
 ];
 
 const MONAD_CHAIN_ID = 10143; // Placeholder for Monad Testnet
@@ -20,6 +28,7 @@ const MONAD_NETWORK_PARAMS = {
 // --- STATE ---
 let provider, signer, contract;
 let userAddress = null;
+let userXP = 0;
 let isConnected = false;
 let allQuests = [];
 let currentFilter = 'all';
@@ -120,45 +129,46 @@ function updateStats() {
     document.getElementById('stat-avg').innerText = avgReward.toFixed(1);
 }
 
-// --- RANK LOGIC ---
-function getRank(balance) {
-    if (balance > 5) return { label: "WARLORD", color: "text-red-500" };
-    if (balance > 1) return { label: "MERCENARY", color: "text-monad-accent" };
-    return { label: "NOVICE", color: "text-gray-500" };
-}
-
-// --- TAG LOGIC ---
-const TAG_RULES = {
-    '#SECURITY': ['audit', 'bug', 'exploit', 'security', 'hack'],
-    '#DESIGN': ['design', 'logo', 'ui', 'ux', 'svg', 'art'],
-    '#DEV': ['contract', 'solidity', 'web3', 'react', 'frontend', 'backend', 'api'],
-    '#DEFI': ['swap', 'liquidity', 'token', 'yield', 'staking']
-};
-
-function getTags(text) {
-    text = text.toLowerCase();
-    let tags = [];
-    for (const [tag, keywords] of Object.entries(TAG_RULES)) {
-        if (keywords.some(k => text.includes(k))) tags.push(tag);
-    }
-    if (tags.length === 0) tags.push('#GENERAL');
-    return tags.slice(0, 3); // Max 3 tags
-}
+// --- REPUTATION LOGIC MOVED TO utils.js ---
 
 // --- WALLET FUNCTIONS ---
+async function updateReputation(addr) {
+    if (!addr) return;
+    
+    // MOCK MODE
+    if (CONTRACT_ADDRESS === "YOUR_CONTRACT_ADDRESS_HERE" || !contract || addr.startsWith("0xMock")) {
+        const completed = allQuests.filter(q => q.isCompleted && q.winner.toLowerCase() === addr.toLowerCase()).length;
+        userXP = completed * 10;
+    } else {
+        try {
+            const xp = await contract.getReputation(addr);
+            userXP = xp.toNumber();
+        } catch (e) {
+            console.error("XP Fetch Error", e);
+        }
+    }
+
+    const rank = getRank(userXP);
+    const rankEl = document.getElementById('userRank');
+    rankEl.innerText = rank.label;
+    rankEl.className = `text-[10px] font-mono tracking-wider ${rank.color}`;
+}
+
 async function updateBalance(addr) {
-    if (!addr || !provider) return;
+    if (!addr || !provider || addr.startsWith("0xMock")) {
+        if (addr && addr.startsWith("0xMock")) {
+             document.getElementById('userBalance').innerText = `100.00 MON`;
+             updateReputation(addr);
+        }
+        return;
+    }
     try {
         const bal = await provider.getBalance(addr);
         const eth = parseFloat(ethers.utils.formatEther(bal));
-
         document.getElementById('userBalance').innerText = `${eth.toFixed(4)} MON`;
-
-        const rank = getRank(eth);
-        const rankEl = document.getElementById('userRank');
-        rankEl.innerText = rank.label;
-        rankEl.className = `text-[10px] font-mono tracking-wider ${rank.color}`;
-
+        
+        // Also update reputation
+        updateReputation(addr);
     } catch (e) {
         console.error("Balance Fetch Error", e);
     }
@@ -258,20 +268,24 @@ async function handleAccountsChanged(accounts) {
 
 // --- NETWORK LOGIC ---
 async function checkNetwork() {
-    if (!window.ethereum) return;
-    const network = await provider.getNetwork();
-    const btn = document.getElementById('networkStatus');
+    if (!window.ethereum || !provider) return;
+    try {
+        const network = await provider.getNetwork();
+        const btn = document.getElementById('networkStatus');
 
-    if (network.chainId !== MONAD_CHAIN_ID) {
-        btn.classList.remove('hidden');
-        btn.classList.add('flex');
-        btn.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> <span>WRONG NETWORK</span>`;
-        btn.className = "flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-500/10 border border-red-500/20 text-red-500 text-[10px] font-mono tracking-wider cursor-pointer hover:bg-red-500/20 transition-colors";
-    } else {
-        btn.classList.remove('hidden');
-        btn.classList.add('flex');
-        btn.innerHTML = `<i class="fa-solid fa-circle-nodes"></i> <span>MONAD TESTNET</span>`;
-        btn.className = "flex items-center gap-2 px-3 py-1.5 rounded-lg bg-monad-success/10 border border-monad-success/20 text-monad-success text-[10px] font-mono tracking-wider";
+        if (network.chainId !== MONAD_CHAIN_ID) {
+            btn.classList.remove('hidden');
+            btn.classList.add('flex');
+            btn.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> <span>WRONG NETWORK</span>`;
+            btn.className = "flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-500/10 border border-red-500/20 text-red-500 text-[10px] font-mono tracking-wider cursor-pointer hover:bg-red-500/20 transition-colors";
+        } else {
+            btn.classList.remove('hidden');
+            btn.classList.add('flex');
+            btn.innerHTML = `<i class="fa-solid fa-circle-nodes"></i> <span>MONAD TESTNET</span>`;
+            btn.className = "flex items-center gap-2 px-3 py-1.5 rounded-lg bg-monad-success/10 border border-monad-success/20 text-monad-success text-[10px] font-mono tracking-wider";
+        }
+    } catch (e) {
+        console.error("Network Check Error", e);
     }
 }
 
@@ -301,14 +315,17 @@ async function switchNetwork() {
 function setupEventListeners() {
     if (!contract) return;
 
-    contract.on("QuestPosted", (id, poster, reward) => {
+    contract.on("QuestPosted", (id, poster, reward, token) => {
         showToast("NEW BOUNTY SIGNAL RECEIVED", "success");
         loadQuests(); // Refresh
     });
 
-    contract.on("QuestCompleted", (id, winner) => {
-        showToast(`MISSION #${id} COMPLETED`, "info");
+    contract.on("QuestCompleted", (id, winner, reward, xpGained) => {
+        showToast(`MISSION #${id} COMPLETED | +${xpGained} XP`, "success");
         loadQuests(); // Refresh
+        if (userAddress && winner.toLowerCase() === userAddress.toLowerCase()) {
+            updateReputation(userAddress);
+        }
     });
 }
 
@@ -336,7 +353,12 @@ async function postQuest() {
 
     const desc = document.getElementById('questDesc').value;
     const reward = document.getElementById('questReward').value;
+    const tokenType = document.getElementById('tokenSelect').value;
+    
     if (!desc || !reward) return showToast("INPUT MISSING", "error");
+
+    // Mock ERC20 address for demo
+    const MOCK_ERC20 = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"; // USDC Example
 
     // --- MOCK MODE (Explicit or Fallback) ---
     if (CONTRACT_ADDRESS === "YOUR_CONTRACT_ADDRESS_HERE" || !contract || (userAddress && userAddress.startsWith("0xMock"))) {
@@ -348,6 +370,7 @@ async function postQuest() {
                 poster: userAddress || "0xMockUser...1337",
                 description: desc,
                 reward: reward,
+                token: tokenType === 'native' ? '0x0000000000000000000000000000000000000000' : MOCK_ERC20,
                 isCompleted: false,
                 winner: "0x000"
             });
@@ -359,45 +382,53 @@ async function postQuest() {
 
             renderQuests();
             updateStats();
-            showToast("BOUNTY DEPLOYED [MOCK]", "success");
+            showToast(`BOUNTY DEPLOYED [MOCK ${tokenType.toUpperCase()}]`, "success");
         }, 1500);
         return;
     }
 
     // --- REAL MODE ---
     try {
-        showToast("INITIATING CONTRACT CALL...", "info");
-
-        // Parse reward and check validity
         const rewardWei = ethers.utils.parseEther(reward.toString());
         if (rewardWei.lte(0)) return showToast("REWARD MUST BE > 0", "error");
 
-        // Send TX with manual gas limit override to prevent estimation errors
-        const tx = await contract.postQuest(desc, {
-            value: rewardWei,
-            gasLimit: 300000 // Force safe limit
-        });
+        if (tokenType === 'native') {
+            showToast("INITIATING MON TRANSACTION...", "info");
+            const tx = await contract.postQuest(desc, {
+                value: rewardWei,
+                gasLimit: 300000
+            });
+            showToast("TRANSACTION SENT...", "info");
+            await tx.wait();
+        } else {
+            // ERC20 Flow (Example with hardcoded token for hackathon)
+            const tokenAddr = prompt("ENTER TOKEN ADDRESS (OR LEAVE BLANK FOR DEMO USDC):", MOCK_ERC20);
+            if (!tokenAddr) return;
+            
+            const tokenContract = new ethers.Contract(tokenAddr, ERC20_ABI, signer);
+            
+            showToast("APPROVING TOKEN...", "info");
+            const approveTx = await tokenContract.approve(CONTRACT_ADDRESS, rewardWei);
+            await approveTx.wait();
+            
+            showToast("INITIATING ERC20 TRANSACTION...", "info");
+            const tx = await contract.postQuestERC20(desc, tokenAddr, rewardWei, {
+                gasLimit: 500000
+            });
+            showToast("TRANSACTION SENT...", "info");
+            await tx.wait();
+        }
 
-        showToast("TRANSACTION SENT...", "info");
-        await tx.wait();
         showToast("BOUNTY DEPLOYED ON-CHAIN", "success");
-
         document.getElementById('questDesc').value = "";
         document.getElementById('questReward').value = "";
-
-        // RPC nodes can be slow to index. Fetch twice.
-        showToast("SYNCING FEED...", "info");
         setTimeout(loadQuests, 2000);
-        setTimeout(loadQuests, 6000); // Backstop
     } catch (err) {
         console.error("Deploy Error:", err);
-
-        // Extract useful error message
         let msg = "TX REVERTED";
         if (err.reason) msg = `ERR: ${err.reason}`;
         else if (err.data && err.data.message) msg = err.data.message;
-        else if (err.message) msg = err.message.slice(0, 50) + "..."; // Truncate long internal errors
-
+        else if (err.message) msg = err.message.slice(0, 50) + "...";
         showToast(msg.toUpperCase(), "error");
     }
 }
@@ -456,7 +487,8 @@ async function loadQuests() {
             id: q.id.toNumber(),
             poster: q.poster,
             description: q.description,
-            reward: ethers.utils.formatEther(q.reward),
+            reward: ethers.utils.formatEther(q.reward), // Simplification: assuming 18 decimals for now
+            token: q.token,
             isCompleted: q.isCompleted,
             winner: q.winner
         }));
@@ -520,6 +552,7 @@ function renderQuests() {
     displayQuests.forEach(q => {
         const isMine = userAddress && q.poster.toLowerCase() === userAddress.toLowerCase();
         const tags = getTags(q.description);
+        const tokenSymbol = (q.token && q.token !== '0x0000000000000000000000000000000000000000') ? 'USDC' : 'MON';
 
         // Styles based on state
         let cardBorder = q.isCompleted
@@ -584,7 +617,7 @@ function renderQuests() {
                     <div class="flex items-end justify-between">
                         <span class="text-xs text-gray-500 font-mono mb-1">REWARD POOL</span>
                         <div class="text-xl font-bold font-mono ${q.isCompleted ? 'text-gray-600' : 'text-monad-success'}">
-                            ${q.reward} <span class="text-xs">MON</span>
+                            ${q.reward} <span class="text-xs">${tokenSymbol}</span>
                         </div>
                     </div>
                     ${actionArea}
@@ -595,50 +628,4 @@ function renderQuests() {
     });
 }
 
-// --- TOAST ---
-function showToast(msg, type = "info") {
-    let bg = "#1a1a1a";
-    if (type === "success") bg = "linear-gradient(to right, #00b09b, #96c93d)";
-    if (type === "error") bg = "linear-gradient(to right, #ff5f6d, #ffc371)";
-
-    Toastify({
-        text: msg,
-        duration: 3000,
-        gravity: "bottom",
-        position: "right",
-        style: {
-            background: "#0A0A0A",
-            border: "2px solid #825CFF",
-            color: type === "error" ? "#825CFF" : "#00A3FF",
-            fontWeight: "bold",
-            fontFamily: "JetBrains Mono, monospace",
-            fontSize: "12px",
-            boxShadow: "0 10px 30px rgba(0,0,0,0.5)"
-        },
-    }).showToast();
-}
-
-function resetSimulation() {
-    if (confirm("RESET ALL MOCK DATA? This will clear your custom quests.")) {
-        localStorage.removeItem('mockQuests');
-        location.reload();
-    }
-}
-
-// --- HELPERS ---
-function generateAvatar(seed) {
-    if (typeof blockies === 'undefined') return '';
-    try {
-        const icon = blockies.create({
-            seed: seed.toLowerCase(),
-            size: 8,
-            scale: 4,
-            color: '#825CFF', // Monad Accent
-            bgcolor: '#1a1a1a',
-            spotcolor: '#00A3FF'
-        });
-        return `<img src="${icon.toDataURL()}" class="w-full h-full object-cover">`;
-    } catch (e) {
-        return '';
-    }
-}
+// --- TOAST/HELPERS MOVED TO utils.js ---

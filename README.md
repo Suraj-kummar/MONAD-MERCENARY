@@ -124,4 +124,3 @@ The contract `MonadMercenary.sol` handles:
 ---
 
 *Built with code and caffeine for the Monad Hackathon.*
-
